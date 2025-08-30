@@ -1,52 +1,73 @@
+// routes/outreach.js
 const express = require('express');
-const { authenticateToken } = require('../middleware/auth');
-const supabase = require('../config/supabase');
-
 const router = express.Router();
+const auth = require('../middleware/auth');
+const { body, validationResult } = require('express-validator'); // ← Add validation
 
-// Get user connections
-router.get('/', authenticateToken, async (req, res) => {
-  try {
-    const userId = req.user.id;
+const Outreach = require('../models/Outreach');
 
-    const { data: connections, error } = await supabase
-      .from('connections')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+/**
+ * POST /api/outreach
+ * @desc    Save a new outreach entry (manually sent by user)
+ * @access  Private
+ */
+router.post(
+  '/',
+  auth,
+  [
+    body('name', 'Name is required').trim().notEmpty(),
+    body('company', 'Company is required').trim().notEmpty(),
+    body('jobTitle', 'Job title is required').trim().notEmpty(),
+    body('connectionNote', 'Connection note is required')
+      .trim()
+      .notEmpty()
+      .isLength({ max: 300 })
+      .withMessage('Note must be 300 characters or less'),
+  ],
+  async (req, res) => {
+    // Handle validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
 
-    if (error) throw error;
+    const { name, company, jobTitle, connectionNote } = req.body;
 
-    res.json({ connections });
-  } catch (error) {
-    console.error('Error fetching connections:', error);
-    res.status(500).json({ error: 'Failed to fetch connections' });
+    try {
+      const outreach = new Outreach({
+        name,
+        company,
+        jobTitle,
+        connectionNote,
+        userId: req.user.id,
+      });
+
+      await outreach.save();
+      res.status(201).json({
+        msg: 'Outreach saved! You can now copy and send it manually.',
+        outreach,
+      });
+    } catch (err) {
+      console.error('[Server] Error saving outreach:', err.message);
+      res.status(500).send('Server error');
+    }
   }
-});
+);
 
-// Add new connection
-router.post('/', authenticateToken, async (req, res) => {
+/**
+ * GET /api/outreach
+ * @desc    Get all outreach entries for logged-in user
+ * @access  Private
+ */
+router.get('/', auth, async (req, res) => {
   try {
-    const userId = req.user.id;
-    const { name, title, company, linkedin_url } = req.body;
-
-    const { data: connection, error } = await supabase
-      .from('connections')
-      .insert([
-        { user_id: userId, name, title, company, linkedin_url }
-      ])
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    res.status(201).json({
-      message: 'Connection added successfully',
-      connection
+    const outreaches = await Outreach.find({ userId: req.user.id }).sort({
+      createdAt: -1,
     });
-  } catch (error) {
-    console.error('Error adding connection:', error);
-    res.status(500).json({ error: 'Failed to add connection' });
+    res.json(outreaches);
+  } catch (err) {
+    console.error('[Server] Error fetching outreach:', err.message);
+    res.status(500).send('Server error');
   }
 });
 
